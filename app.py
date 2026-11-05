@@ -184,7 +184,8 @@ async def websocket_endpoint(ws: WebSocket):
     conversation: list = []
     history = recent_conversations(limit=5)
     for role, content in history:
-        conversation.append({"role": role, "content": content})
+        if role in ("user", "assistant"):  # only valid Groq roles
+            conversation.append({"role": role, "content": content})
 
     # Greeting
     greeting = f"Hey {USER_NAME}! I'm Baymax â ready when you are."
