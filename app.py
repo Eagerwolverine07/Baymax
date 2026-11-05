@@ -179,7 +179,7 @@ async def index(request: Request):
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     async with connections_lock:
-        active_connections.append(ws)
+        acti, onnections.append(ws)
 
     conversation: list = []
     history = recent_conversations(limit=5)
@@ -188,7 +188,7 @@ async def websocket_endpoint(ws: WebSocket):
             conversation.append({"role": role, "content": content})
 
     # Greeting
-    greeting = f"Hey {USER_NAME}! I'm Baymax â ready when you are."
+    greeting = f"Hey {USER_NAME}! I'm Baymax, ready when you are."
     await ws.send_text(json.dumps({"type": "text", "content": greeting}))
     audio = await text_to_speech(greeting)
     if audio:
@@ -206,7 +206,7 @@ async def websocket_endpoint(ws: WebSocket):
             if not user_text:
                 continue
 
-            log_message("user", user_text)
+          log_message("user", user_text)
             conversation.append({"role": "user", "content": user_text})
             if len(conversation) > 20:
                 conversation = conversation[-20:]
