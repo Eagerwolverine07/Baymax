@@ -21,42 +21,32 @@ from memory import (
     add_reminder, log_message, recent_conversations
 )
 
-# ─ Config ─
-GROQ_API_KEY        = os.getenv("GROQ_API_KEY")
-ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY")
+# ââ Config ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+GROQ_API_KEY       = os.getenv("GROQ_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "sB7vwSCyX0tQmU24cW2C")
-GROQ_MODEL          = "llama-3.3-70b-versatile"
-ELEVENLABS_MODEL    = "eleven_turbo_v2_5"
-USER_NAME           = "Amber"
+GROQ_MODEL         = "llama-3.3-70b-versatile"
+ELEVENLABS_MODEL   = "eleven_turbo_v2_5"
+USER_NAME          = "Amber"
 
-SYSTEM_PROMPT = f"""You are Baymax, {USER_NAME}'s personal AI assistant.
+SYSTEM_PROMPT = f"""You are Baymax, a calm and helpful personal AI assistant for {USER_NAME}.
+You speak naturally and concisely â responses should feel like a real conversation, not a lecture.
+Keep spoken answers brief (2-4 sentences max) unless asked to elaborate.
+{USER_NAME} is exploring roles in GTM, BizOps, and RevOps. Help with job search, planning, and daily tasks.
 
-Your personality:
-- Calm, natural, confident - like a helpful junior colleague
-- Humble but occasionally funny - light dry humour, never forced
-- Concise. You speak, so keep responses SHORT (1-3 sentences max unless asked for more)
-- Never say "As an AI..." or "I'm just an assistant..."
+You can take actions by embedding tags (they will be stripped before you speak):
+- Add a task: [ADD_TASK: description]
+- List tasks: [LIST_TASKS]
+- Complete a task: [COMPLETE_TASK: description]
+- Add a reminder: [ADD_REMINDER: text | YYYY-MM-DD HH:MM]
 
-You can help with:
-- Managing tasks and to-do lists
-- Setting reminders
-- General questions and conversation
-- Job search support - {USER_NAME} is targeting GTM Strategy, BizOps, RevOps roles at tech companies
+Always be warm, supportive, and direct."""
 
-To manage tasks, embed these tags anywhere in your response (they'll be hidden from the user):
-- [ADD_TASK: <task text>] - to add a task
-- [LIST_TASKS] - to retrieve and read the pending task list
-- [COMPLETE_TASK: <task name>] - to mark a task done
-- [ADD_REMINDER: <text> | <optional datetime>] - to save a reminder
-
-Always respond in plain spoken English. No markdown, no asterisks, no bullet points.
-Keep it conversational. You're talking, not writing.
-Be brief unless the user asks for detail."""
-
+# ââ Groq client âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ─ FastAPI app ─
-app = FastAPI(title="Baymax")
+# ââ FastAPI app ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -64,7 +54,7 @@ templates = Jinja2Templates(directory="templates")
 active_connections: list[WebSocket] = []
 connections_lock = asyncio.Lock()
 
-# ─ AI response ─
+# ââ AI response ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def get_ai_response(conversation_history: list) -> str:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
     response = groq_client.chat.completions.create(
@@ -75,7 +65,7 @@ def get_ai_response(conversation_history: list) -> str:
     )
     return response.choices[0].message.content
 
-# ─ TTS ─
+# ââ TTS ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 async def text_to_speech(text: str) -> bytes | None:
     if not ELEVENLABS_API_KEY or not text.strip():
         return None
@@ -84,7 +74,7 @@ async def text_to_speech(text: str) -> bytes | None:
     payload = {
         "text": text,
         "model_id": ELEVENLABS_MODEL,
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.3, "use_speaker_boost": True},
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.3},
     }
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, headers=headers, json=payload)
@@ -92,61 +82,74 @@ async def text_to_speech(text: str) -> bytes | None:
             return r.content
     return None
 
-# ─ Action parser ─
+# ââ Action parser âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def parse_and_execute_actions(text: str) -> str:
-    clean = text
-    for m in re.finditer(r'\[ADD_TASK:\s*(.+?)\]', text):
-        add_task(m.group(1).strip())
-        clean = clean.replace(m.group(0), "")
     if "[LIST_TASKS]" in text:
         tasks = list_tasks()
-        clean = clean.replace("[LIST_TASKS]", "")
-        if tasks:
-            names = ", ".join(t["task"] for t in tasks[:8])
-            clean += f" Your pending tasks are: {names}."
-        else:
-            clean += " You have no pending tasks right now."
-    for m in re.finditer(r'\[COMPLETE_TASK:\s*(.+?)\]', text):
-        complete_task(m.group(1).strip())
-        clean = clean.replace(m.group(0), "")
-    for m in re.finditer(r'\[ADD_REMINDER:\s*(.+?)(?:\s*\|\s*(.+?))?\]', text):
-        add_reminder(m.group(1).strip(), m.group(2).strip() if m.group(2) else None)
-        clean = clean.replace(m.group(0), "")
-    return clean.strip()
+        task_text = "\n".join(f"- {t}" for t in tasks) if tasks else "No tasks yet."
+        text = text.replace("[LIST_TASKS]", f"\n{task_text}\n")
 
-# ─ Wake word thread ─
+    for match in re.finditer(r"\[ADD_TASK:\s*(.+?)\]", text):
+        add_task(match.group(1).strip())
+        text = text.replace(match.group(0), "")
+
+    for match in re.finditer(r"\[COMPLETE_TASK:\s*(.+?)\]", text):
+        complete_task(match.group(1).strip())
+        text = text.replace(match.group(0), "")
+
+    for match in re.finditer(r"\[ADD_REMINDER:\s*(.+?)\|(.+?)\]", text):
+        add_reminder(match.group(1).strip(), match.group(2).strip())
+        text = text.replace(match.group(0), "")
+
+    return text.strip()
+
+# ââ Wake word thread ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def start_wake_word_listener(loop: asyncio.AbstractEventLoop):
-    """Background thread: listens for the wake phrase and signals the browser."""
+    """Background thread: listen for 'hey jarvis' (closest pre-trained model to 'hey baymax')."""
     try:
         import sounddevice as sd
         import openwakeword
         from openwakeword.model import Model as WakeModel
 
+        # Download models on first run (no-op after)
         openwakeword.utils.download_models(["hey_jarvis"])
+
         wake_model = WakeModel(wakeword_models=["hey_jarvis"], inference_framework="onnx")
 
         SAMPLE_RATE = 16000
-        CHUNK = int(SAMPLE_RATE * 0.08)  # 80 ms frames
+        CHUNK = int(SAMPLE_RATE * 0.08)   # 80 ms frames
+
+        THRESHOLD = 0.3   # lower = more sensitive (default was 0.5)
+        _debug_counter = [0]
 
         def audio_callback(indata, frames, time_info, status):
             audio = np.squeeze(indata)
             audio_int16 = (audio * 32767).astype(np.int16)
             prediction = wake_model.predict(audio_int16)
             score = max(prediction.values()) if prediction else 0.0
-            if score > 0.5:
+            # Print score every ~2 seconds so you can tune the threshold
+            _debug_counter[0] += 1
+            if _debug_counter[0] % 25 == 0 and score > 0.05:
+                print(f"[wake] score={score:.3f} (trigger>{THRESHOLD})")
+            if score > THRESHOLD:
+                print(f"[wake] DETECTED! score={score:.3f}")
                 wake_model.reset()
                 asyncio.run_coroutine_threadsafe(_broadcast_wake_word(), loop)
 
-        with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-                            blocksize=CHUNK, callback=audio_callback):
-            print("Wake word listener active - say Hey Baymax")
-            threading.Event().wait()
+        with sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="float32",
+            blocksize=CHUNK,
+            callback=audio_callback,
+        ):
+            print("ðï¸  Wake word listener active â say 'Hey Baymax'")
+            threading.Event().wait()   # block forever
 
     except ImportError:
-        print("Wake word deps not installed. Run: pip install openwakeword sounddevice")
+        print("â ï¸  Wake word deps not installed. Run: pip install openwakeword sounddevice")
     except Exception as e:
-        print(f"Wake word listener error: {e}")
-
+        print(f"â ï¸  Wake word listener error: {e}")
 
 async def _broadcast_wake_word():
     async with connections_lock:
@@ -159,78 +162,74 @@ async def _broadcast_wake_word():
         for ws in dead:
             active_connections.remove(ws)
 
-# ─ Startup ─
+# ââ Startup âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 @app.on_event("startup")
 async def startup():
     init_db()
-    if not GROQ_API_KEY:
-        print("WARNING: GROQ_API_KEY not set")
-    if not ELEVENLABS_API_KEY:
-        print("WARNING: ELEVENLABS_API_KEY not set")
     loop = asyncio.get_event_loop()
     t = threading.Thread(target=start_wake_word_listener, args=(loop,), daemon=True)
     t.start()
 
-# ─ Routes ─
+# ââ Routes ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 @app.get("/")
-async def root():
-    with open("templates/index.html") as f:
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(f.read())
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
     async with connections_lock:
-        active_connections.append(websocket)
+        active_connections.append(ws)
 
-    conversation_history: list[dict] = []
-    greeting = f"Hey {USER_NAME}. I'm Baymax, ready when you are."
-    log_message("assistant", greeting)
-    await websocket.send_json({"type": "text", "content": greeting})
-    try:
-        audio = await text_to_speech(greeting)
-        if audio:
-            await websocket.send_bytes(audio)
-    except Exception as e:
-        print(f"TTS greeting error: {e}")
+    conversation: list = []
+    history = recent_conversations(limit=5)
+    for role, content in history:
+        conversation.append({"role": role, "content": content})
+
+    # Greeting
+    greeting = f"Hey {USER_NAME}! I'm Baymax â ready when you are."
+    await ws.send_text(json.dumps({"type": "text", "content": greeting}))
+    audio = await text_to_speech(greeting)
+    if audio:
+        await ws.send_bytes(audio)
 
     try:
         while True:
-            data = await websocket.receive_json()
-            if data.get("type") != "user_message":
+            raw = await ws.receive_text()
+            msg = json.loads(raw)
+
+            if msg.get("type") != "user_message":
                 continue
-            user_text = data.get("content", "").strip()
+
+            user_text = msg["content"].strip()
             if not user_text:
                 continue
+
             log_message("user", user_text)
-            conversation_history.append({"role": "user", "content": user_text})
-            if len(conversation_history) > 20:
-                conversation_history = conversation_history[-20:]
-            try:
-                ai_raw = get_ai_response(conversation_history)
-            except Exception as e:
-                print(f"Groq error: {e}")
-                ai_raw = "Sorry, I had a brain freeze. Try again?"
-            clean = parse_and_execute_actions(ai_raw) or "Done."
-            log_message("assistant", clean)
-            conversation_history.append({"role": "assistant", "content": clean})
-            await websocket.send_json({"type": "text", "content": clean})
-            try:
-                audio = await text_to_speech(clean)
-                if audio:
-                    await websocket.send_bytes(audio)
-            except Exception as e:
-                print(f"TTS error: {e}")
-                await websocket.send_json({"type": "tts_error", "content": str(e)})
+            conversation.append({"role": "user", "content": user_text})
+            if len(conversation) > 20:
+                conversation = conversation[-20:]
+
+            await ws.send_text(json.dumps({"type": "status", "content": "thinking"}))
+
+            ai_raw = get_ai_response(conversation)
+            ai_clean = parse_and_execute_actions(ai_raw)
+
+            log_message("assistant", ai_clean)
+            conversation.append({"role": "assistant", "content": ai_clean})
+
+            await ws.send_text(json.dumps({"type": "text", "content": ai_clean}))
+            audio = await text_to_speech(ai_clean)
+            if audio:
+                await ws.send_bytes(audio)
+
     except WebSocketDisconnect:
-        print("Client disconnected")
+        pass
     finally:
         async with connections_lock:
-            if websocket in active_connections:
-                active_connections.remove(websocket)
+            if ws in active_connections:
+                active_connections.remove(ws)
 
 if __name__ == "__main__":
     import uvicorn
-    print("\nBaymax starting at http://localhost:8000\n")
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
